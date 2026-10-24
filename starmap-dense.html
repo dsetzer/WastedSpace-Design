@@ -1,0 +1,763 @@
+<meta charset="utf-8">
+<title>WastedSpace Starmap Preview (Dense)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: a large live map with a side panel of readouts, key and notes; panel drops below the map on narrow screens. Single dark look: it is a map of space. */
+:root{
+  color-scheme:dark;
+  --bg:#0a0e14; --panel:#121923; --edge:#3a4a5e; --ink:#e6edf3; --dim:#c4d2de; --muted:#9fb0c2;
+  --accent:#6ee7c8; --worm:#d58cff; --warn:#ff8a6a;
+  --grid-major:#6f86a0; --grid-minor:#435469;
+  --display:'Sora',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{background:var(--bg);color:var(--ink)}
+body{font:400 14px/1.55 var(--display);padding-inline:16px;padding-block:20px 40px}
+.wrap{max-width:1280px;margin:0 auto;display:grid;gap:16px}
+header{display:grid;gap:4px}
+h1{font:600 22px/1.25 var(--display);margin:0;letter-spacing:-.01em;text-wrap:balance}
+header p{margin:0;color:var(--dim);max-width:75ch}
+header p.note{color:var(--accent)}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+@media (max-width:900px){.main{grid-template-columns:minmax(0,1fr)}}
+.mapbox{position:relative;height:clamp(420px,72vh,820px);border:1px solid var(--edge);border-radius:6px;overflow:hidden;background:var(--bg);touch-action:none}
+canvas{display:block;width:100%;height:100%;cursor:grab}
+canvas:active{cursor:grabbing}
+canvas:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.hud{position:absolute;pointer-events:none;font:500 12px/1.4 var(--mono);color:var(--ink);background:rgba(10,14,20,.86);border:1px solid var(--edge);border-radius:4px;padding:6px 9px}
+.hud.tl{top:10px;left:10px}
+.hud.bl{bottom:10px;left:10px;display:grid;gap:4px}
+.hud.worm{display:none;white-space:pre;border-color:var(--worm);max-width:calc(100% - 20px)}
+.hud.worm.pinned{pointer-events:auto;right:10px;bottom:10px;left:auto;top:auto}
+.hud.worm b{color:var(--worm);font-weight:500}
+.hud.worm .row{margin-top:6px;gap:6px}
+.hud.worm button{font:500 12px/1 var(--display);padding:6px 9px}
+.scalebar{height:6px;border:2px solid var(--ink);border-top:0}
+.ctrls{position:absolute;top:10px;right:10px;display:grid;gap:6px}
+button{font:500 13px/1 var(--display);color:var(--ink);background:var(--panel);border:1px solid var(--edge);border-radius:4px;padding:8px 11px;cursor:pointer}
+button:hover{border-color:var(--dim)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ctrls button{width:38px;height:38px;padding:0;font-size:18px}
+aside{display:grid;gap:12px;min-width:0}
+.card{align-content:start;background:var(--panel);border:1px solid var(--edge);border-radius:6px;padding:12px 14px;display:grid;gap:8px;min-width:0}
+.card h2{font:600 11px/1.3 var(--display);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin:0}
+.readout{font:400 12.5px/1.6 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;white-space:pre-wrap;min-height:5.5em}
+.key{display:grid;grid-template-columns:22px 1fr;gap:5px 8px;align-items:center;font-size:12.5px;color:var(--dim)}
+.key canvas{width:22px;height:16px;cursor:default}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+label{display:flex;gap:8px;align-items:center;color:var(--dim);font-size:13px;cursor:pointer}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.seed{font:400 12px var(--mono);color:var(--muted)}
+.notes{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))}
+.notes ul{margin:0;padding-left:18px;color:var(--dim);display:grid;gap:4px;font-size:13px}
+.notes b{color:var(--ink);font-weight:500}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>WastedSpace Starmap Preview (Dense)</h1>
+    <p class="note">An earlier, denser configuration, kept for reference. It is not the current one: about 1 sector in 4 holds a system.</p>
+    <p>A sample universe made by the generator in the design document. Drag to move, scroll or pinch to zoom, or use the buttons. Zoom in far enough and each sector opens into its 21 × 21 regions.</p>
+  </header>
+  <div class="main">
+    <div class="mapbox" id="mapbox">
+      <canvas id="map" tabindex="0" aria-label="Interactive map of a generated universe. Arrow keys move, plus and minus zoom."></canvas>
+      <div class="hud tl" id="hudTop"></div>
+      <div class="hud bl"><div id="scaleLabel"></div><div class="scalebar" id="scaleBar"></div></div>
+      <div class="hud worm" id="wormInfo" role="status" aria-live="polite"></div>
+      <div class="ctrls">
+        <button id="zin" aria-label="Zoom in">+</button>
+        <button id="zout" aria-label="Zoom out">−</button>
+        <button id="home" aria-label="Back to the start view" title="Back to the start view">⌂</button>
+      </div>
+    </div>
+    <aside>
+      <section class="card"><h2>Under the cursor</h2><div class="readout" id="readout">Move over the map.</div></section>
+      <section class="card"><h2>Key</h2><div class="key" id="key"></div></section>
+      <section class="card"><h2>Universe</h2>
+        <label><input type="checkbox" id="showWorm" checked> Show wormholes</label>
+        <label><input type="checkbox" id="showAsteroid" checked> Show asteroid fields</label>
+        <div class="row"><button id="newSeed">New universe</button><span class="seed" id="seedLabel"></span></div>
+      </section>
+    </aside>
+  </div>
+  <div class="notes">
+    <section class="card"><h2>Taken from the design document</h2><ul>
+      <li><b>Seed tree</b> (§1.1): every sector, region and value comes from hashing its parent&#x27;s seed with its own address part or name.</li>
+      <li><b>Clustering</b> (§2.2): a smooth density field decides which sectors hold a system, so systems gather into clusters with voids between. A sector keeps its system only if at most two of its eight neighbors also rolled one, so no system has more than two adjacent systems.</li>
+      <li><b>Sectors</b> (§2.1): 21 × 21 regions, at most one system, its center in region 0, 0.</li>
+      <li><b>Planet placement</b> (§4.1): coarse and fine fields along the orbital radius, cut by a threshold; most systems get 4 or 5 planets.</li>
+      <li><b>Biomes</b> (§4.2): picked by orbit, hot worlds inward and cold worlds outward.</li>
+      <li><b>Deep space</b> (§3.3): rock and ice asteroid fields, pirate outposts and wormholes; Open Space holds asteroid fields.</li>
+      <li><b>Wormholes</b> (§3.4): space is split into blocks of 64 × 64 sectors, each with one spot region in its middle half, so two ends are always at least 32 sectors apart. Blocks fall into nine interleaved layers, each paired within its own groups by a Feistel cipher with the hinge (N − 1 − n) xor 1, so every block has exactly one partner and is its partner&#x27;s partner. A pair is a wormhole when its spots are within its layer&#x27;s reach, its roll is under the threshold and both spots are Deep Space. Every value comes from the block&#x27;s own coordinates.</li>
+    </ul></section>
+    <section class="card"><h2>Chosen for this preview</h2><ul>
+      <li><b>Wormhole reach</b>: two layers reach 300 to 500 sectors (groups of 4 × 4 blocks, 12 cipher rounds), three 300 to 1,000 (8 × 8), three 300 to 3,000 (16 × 16) and one 300 to 8,000 (32 × 32), so wormholes come in roughly 2 : 3 : 3 : 1 short to long. Each layer&#x27;s threshold is set so about 1 block in 4 holds an end, and a 10 × 10-sector window shows one about once in 160 windows.</li>
+      <li><b>Drawing</b>: the map opens at about 12 × 12 sectors on a wormhole end, close to the in-game starmap. Lines are colored by length. At most 40 wormholes are drawn at once, at full strength: the ones with the lowest rolls among those in view, so the same ones stay while panning and the map never turns into a tangle; the top corner says how many are shown. Hover a wormhole to see its length and ends, click it to keep it selected.</li>
+      <li><b>Rates</b> for star types, asteroid fields and pirate outposts, and the size of clusters and voids, are placeholders; none are set in the doc yet.</li>
+      <li><b>Hash</b> is a fast 32-bit one for the browser; the game uses 53-bit hashes with a server secret (Appendix C).</li>
+    </ul></section>
+  </div>
+</div>
+
+<script>
+// WastedSpace universe generator (preview). Every value comes from the seed tree:
+// a place's seed is hash(parent seed, its address part); a value is hash(seed, its name).
+const Gen = (() => {
+  // names of values, as fixed numeric tags
+  const T = { DENS: 101, SYS: 102, STAR: 103, THR: 104, COARSE: 105, FINE: 106, ANG: 107, BIOME: 108, RING: 109,
+              KIND: 110, WH: 111, SPOT: 112, ROLL: 113, F: 114 };
+
+  function hash() {
+    let h = 0x811c9dc5 ^ arguments.length;
+    for (let i = 0; i < arguments.length; i++) {
+      let k = arguments[i] | 0;
+      k = Math.imul(k, 0xcc9e2d51); k = (k << 15) | (k >>> 17); k = Math.imul(k, 0x1b873593);
+      h ^= k; h = (h << 13) | (h >>> 19); h = (Math.imul(h, 5) + 0xe6546b64) | 0;
+    }
+    h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
+    return h >>> 0;
+  }
+  const unit = h => h / 4294967296;
+  const smooth = t => t * t * (3 - 2 * t);
+
+  // tunable rates; configure() overrides them before the map is drawn
+  const CFG = { sysBase: 0.001575, sysScale: 0.13125, sysPow: 1.6, maxNeighbors: 2, voidScale: 0, voidLo: 0.4, voidHi: 0.55, voidFloor: 0.1, whT: 1 };
+  let ROOT = 1;
+  const cache = new Map();
+  function setRoot(r) { ROOT = r >>> 0; cache.clear(); }
+
+  // ---- sector values ----
+  function lattice(ix, iy, oct) { return unit(hash(ROOT, T.DENS, oct, ix, iy)); }
+  const ROT = [[0.62, 0.78], [-0.28, 0.96], [0.91, -0.41], [0.35, -0.94]];   // each octave turned, so the lattice never lines up with the grid
+  function valueNoise(x, y, scale, oct) {
+    const [co, si] = ROT[oct], rx = x * co - y * si, ry = x * si + y * co;
+    const fx = rx / scale, fy = ry / scale, ix = Math.floor(fx), iy = Math.floor(fy);
+    const tx = smooth(fx - ix), ty = smooth(fy - iy);
+    const a = lattice(ix, iy, oct), b = lattice(ix + 1, iy, oct), c = lattice(ix, iy + 1, oct), d = lattice(ix + 1, iy + 1, oct);
+    return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+  }
+  // smooth density field, sampled at the sector's own coordinates (2.2)
+  function density(X, Y) {
+    const n = 0.55 * valueNoise(X, Y, 70, 0) + 0.3 * valueNoise(X, Y, 26, 1) + 0.15 * valueNoise(X, Y, 9, 2);
+    const t = Math.min(1, Math.max(0, (n - 0.38) / 0.34));
+    return smooth(t) * voidMask(X, Y);
+  }
+  // a much wider field carves large voids: 0 deep in a void, 1 outside them
+  function voidMask(X, Y) {
+    if (!CFG.voidScale) return 1;
+    const v = valueNoise(X, Y, CFG.voidScale, 3);
+    return smooth(Math.min(1, Math.max(0, (v - CFG.voidLo) / (CFG.voidHi - CFG.voidLo))));
+  }
+  const sectorSeed = (X, Y) => hash(ROOT, X, Y);
+  // the density roll alone (2.2)
+  function candidate(X, Y) {
+    const m = voidMask(X, Y);   // voids keep only a small share of the base rate
+    const pSys = CFG.sysBase * (CFG.voidFloor + (1 - CFG.voidFloor) * m) + CFG.sysScale * Math.pow(density(X, Y), CFG.sysPow);
+    return unit(hash(sectorSeed(X, Y), T.SYS)) < pSys;
+  }
+  // a candidate keeps its system only if at most maxNeighbors of its 8 neighbors are candidates,
+  // so no system ends up with more than maxNeighbors adjacent systems; uses only the neighbors' own rolls
+  function rollSystem(X, Y) {
+    if (!candidate(X, Y)) return false;
+    if (CFG.maxNeighbors >= 8) return true;
+    let c = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if ((dx || dy) && candidate(X + dx, Y + dy) && ++c > CFG.maxNeighbors) return false;
+    }
+    return true;
+  }
+
+  const STARS = [
+    ['Red dwarf', 30, 'star'], ['Yellow dwarf', 17, 'star'], ['White dwarf', 9, 'star'], ['Red giant', 7, 'star'],
+    ['Blue giant', 4, 'star'], ['Neutron star', 5, 'neutron'], ['Black hole', 4, 'blackhole'], ['Rogue planet', 24, 'rogue']];
+  const STAR_TOTAL = STARS.reduce((s, x) => s + x[1], 0);
+
+  const BIOMES = [ // name, orbit band center (0 inner .. 1 outer) or null for "any"
+    ['Volcanic', 0.05], ['Scorched', 0.0], ['Toxic', 0.12], ['Desert', 0.3], ['Terra', 0.45], ['Forest', 0.45],
+    ['Jungle', 0.45], ['Swamp', 0.45], ['Grassland', 0.45], ['Ocean', 0.45], ['Fungal', 0.45], ['Tundra', 0.65],
+    ['Glacial', 0.9], ['Gas Giant', 0.95], ['Barren', null], ['Crystal', null], ['Irradiated', null], ['Exotic', null]];
+
+  function radialNoise(seed, tag, r, scale) {
+    const f = r / scale, i = Math.floor(f), t = smooth(f - i);
+    const a = unit(hash(seed, tag, i)), b = unit(hash(seed, tag, i + 1));
+    return a + (b - a) * t;
+  }
+
+  function sector(X, Y) {
+    const key = X + ',' + Y;
+    let s = cache.get(key);
+    if (s) return s;
+    const seed = sectorSeed(X, Y);
+    const d = density(X, Y);
+    const hasSystem = rollSystem(X, Y);
+    s = { X, Y, seed, density: d, hasSystem, star: null, _planets: null };
+    if (hasSystem) {
+      let r = unit(hash(seed, T.STAR)) * STAR_TOTAL, i = 0;
+      while (r >= STARS[i][1]) { r -= STARS[i][1]; i++; }
+      s.star = { name: STARS[i][0], kind: STARS[i][2] };
+    }
+    Object.defineProperty(s, 'planets', { get() { if (!this._planets) this._planets = this.star && this.star.kind === 'star' ? planets(this.seed) : []; return this._planets; } });
+    if (cache.size > 400000) cache.clear();
+    cache.set(key, s);
+    return s;
+  }
+
+  // the far view only needs whether a sector has a system and which kind: same values as sector(), no caching
+  function systemAt(X, Y) {
+    if (!rollSystem(X, Y)) return -1;
+    const seed = sectorSeed(X, Y);
+    let r = unit(hash(seed, T.STAR)) * STAR_TOTAL, i = 0;
+    while (r >= STARS[i][1]) { r -= STARS[i][1]; i++; }
+    return i;
+  }
+
+  // planet placement (3.4): coarse + fine field along the orbital radius, cut by a threshold;
+  // peaks above it become planets, with a minimum separation
+  function planets(seed) {
+    const thr = 0.27 + 0.12 * unit(hash(seed, T.THR));
+    const f = r => 0.62 * radialNoise(seed, T.COARSE, r, 3.0) + 0.38 * radialNoise(seed, T.FINE, r, 0.7);
+    const peaks = [];
+    const step = 0.05;
+    for (let r = 2; r <= 10; r += step) {
+      const v = f(r);
+      if (v > thr && v >= f(r - step) && v >= f(r + step)) {
+        if (!peaks.length || r - peaks[peaks.length - 1].r >= 0.8) peaks.push({ r, v });
+      }
+    }
+    if (!peaks.length) { let best = 2; for (let r = 2; r <= 10; r += step) if (f(r) > f(best)) best = r; peaks.push({ r: best }); }
+    const out = [], used = new Set(['0,0']);
+    peaks.slice(0, 8).forEach((p, i) => {
+      let th = 2 * Math.PI * unit(hash(seed, T.ANG, i));
+      for (let tries = 0; tries < 40; tries++) {
+        const x = Math.round(p.r * Math.cos(th)), y = Math.round(p.r * Math.sin(th));
+        if (Math.abs(x) <= 10 && Math.abs(y) <= 10 && !used.has(x + ',' + y)) {
+          used.add(x + ',' + y);
+          const orbit = hash(seed, x, y);           // the orbit region's seed
+          const pos = (p.r - 2) / 8;
+          let total = 0; const w = BIOMES.map(b => { const v = b[1] === null ? 0.3 : Math.exp(-Math.pow((pos - b[1]) / 0.22, 2)); total += v; return v; });
+          let pick = unit(hash(orbit, T.BIOME)) * total, k = 0;
+          while (pick >= w[k]) { pick -= w[k]; k++; }
+          out.push({ x, y, r: p.r, biome: BIOMES[k][0], ring: unit(hash(orbit, T.RING)) < 0.2 });
+          break;
+        }
+        th += 0.37;
+      }
+    });
+    return out;
+  }
+
+  // what an Open or Deep Space region holds (3.1, 3.6); rates are illustrative
+  function regionKind(X, Y, x, y) {
+    const s = sector(X, Y);
+    const u = unit(hash(hash(s.seed, x, y), T.KIND));
+    if (s.hasSystem) return u < 0.1 ? 'rock' : u < 0.15 ? 'ice' : 'empty';
+    return u < 0.07 ? 'rock' : u < 0.12 ? 'ice' : u < 0.13 ? 'pirate' : 'empty';
+  }
+
+  // ---- wormholes (3.7): Feistel pairing between blocks, inside groups of blocks ----
+  // A region works out everything from its own coordinates: its block, its block's spot, the partner
+  // block (a Feistel shuffle of the block's place in its group, through the hinge, shuffled back), the
+  // partner's spot, and a roll for the pair. Every block has exactly one partner and is its partner's partner.
+  const W = { block: 64, mid: true };
+  // Each of the nine layers has its own reach: a length band and a group size big enough to hold it,
+  // and its own threshold t so every layer ends up with about the same share of ends.
+  // Two layers reach 300-500 sectors, three 300-1,000, three 300-3,000 and one 300-8,000.
+  const BANDS = {
+    A: { group: 4, dmin: 300, dmax: 500, t: 0.83 },
+    B: { group: 8, dmin: 300, dmax: 1000, t: 0.45 },
+    C: { group: 16, dmin: 300, dmax: 3000, t: 0.29 },
+    D: { group: 32, dmin: 300, dmax: 8000, t: 0.275 },
+  };
+  const LAYER = ['A', 'B', 'C', 'B', 'A', 'C', 'C', 'B', 'D'].map(k => BANDS[k]);   // by layer number c; same-band layers never share a shift
+  const whCache = new Map();
+  const groupKey = (c, gx, gy) => hash(ROOT, T.WH, c, gx, gy);
+  function feistel(lx, ly, K, G, inverse) {
+    const m = G - 1, n = G <= 4 ? 12 : 6;
+    let L = lx, R = ly;
+    // small Feistel ciphers need more rounds than large ones: 6 rounds look random from 3-bit halves up,
+    // 2-bit halves (4 x 4 groups) need 12
+    if (!inverse) { for (let r = 1; r <= n; r++) { const t = L ^ (hash(K, T.F, r, R) & m); L = R; R = t; } }
+    else { for (let r = n; r >= 1; r--) { const t = R ^ (hash(K, T.F, r, L) & m); R = L; L = t; } }
+    return [L, R];
+  }
+  // A block's place in its group. Blocks are split into k x k interleaved layers by their position
+  // (bx mod k, by mod k); each layer pairs only within itself, on its own grid of groups, and every
+  // layer's grid is shifted by a different amount, so no two layers' group borders line up and there
+  // is no spot that most wormholes avoid.
+  const SPLIT = 3, NL = SPLIT * SPLIT;
+  function place(bx, by) {
+    const k = SPLIT;
+    const cx = ((bx % k) + k) % k, cy = ((by % k) + k) % k, c = cx + k * cy, G = LAYER[c].group;
+    const ox = Math.floor(c * G / NL), oy = Math.floor(((c * 4) % NL) * G / NL);   // 4 and 9 share no factor
+    const u = (bx - cx) / k - ox, v = (by - cy) / k - oy;
+    const gx = Math.floor(u / G), gy = Math.floor(v / G);
+    return { c, cx, cy, ox, oy, gx, gy, G, lx: u - gx * G, ly: v - gy * G };
+  }
+  function unplace(p, lx, ly) {
+    const G = p.G, k = SPLIT;
+    return [(p.gx * G + lx + p.ox) * k + p.cx, (p.gy * G + ly + p.oy) * k + p.cy];
+  }
+  function partner(bx, by) {
+    const p = place(bx, by), K = groupKey(p.c, p.gx, p.gy), G = p.G;
+    const [L, R] = feistel(p.lx, p.ly, K, G, false);
+    // the hinge: maps the encrypted number n to (N - 1 - n) xor 1, its own inverse with no fixed point;
+    // flipping only the last bit (n xor 1) left partners of nearby blocks measurably related
+    const N = G * G, h = ((N - 1 - (L * G + R)) ^ 1);
+    const [qx, qy] = feistel(Math.floor(h / G), h % G, K, G, true);
+    return unplace(p, qx, qy);
+  }
+  // the one region in a block that can hold a wormhole end; inside the block's middle half, so two ends
+  // are always at least half a block apart
+  function spot(bx, by) {
+    const B = W.block, off = W.mid ? B / 4 : 0, span = W.mid ? B / 2 : B;
+    return { X: bx * B + off + hash(ROOT, T.SPOT, 1, bx, by) % span, Y: by * B + off + hash(ROOT, T.SPOT, 2, bx, by) % span,
+             x: hash(ROOT, T.SPOT, 3, bx, by) % 21 - 10, y: hash(ROOT, T.SPOT, 4, bx, by) % 21 - 10 };
+  }
+  const deep = sp => !sector(sp.X, sp.Y).hasSystem;
+  const sdist = (a, b) => Math.hypot(a.X + a.x / 21 - b.X - b.x / 21, a.Y + a.y / 21 - b.Y - b.y / 21);
+  // the pair's roll: both blocks put in the same order, hashed with their group's key
+  function roll(bx, by, px, py) {
+    const p = place(bx, by), q = place(px, py), G = p.G;
+    const ia = p.ly * G + p.lx, ib = q.ly * G + q.lx;
+    return unit(hash(groupKey(p.c, p.gx, p.gy), T.ROLL, Math.min(ia, ib), Math.max(ia, ib)));
+  }
+  // the whole test for one block, from its own coordinates
+  function wormhole(bx, by) {
+    const key = bx + ',' + by;
+    if (whCache.has(key)) return whCache.get(key);
+    let res = null;
+    const [px, py] = partner(bx, by);
+    const L = LAYER[place(bx, by).c];
+    const a = spot(bx, by), b = spot(px, py), d = sdist(a, b);
+    if (d >= L.dmin && d <= L.dmax) {
+      const r = roll(bx, by, px, py);
+      const T1 = Math.min(1, L.t * CFG.whT);
+      if (r < T1 && deep(a) && deep(b)) res = { px, py, r, u: r / T1, a, b, d, band: L.dmax };   // u: the roll scaled to 0..1 among this layer's wormholes
+    }
+    if (whCache.size > 200000) whCache.clear();
+    whCache.set(key, res);
+    return res;
+  }
+  const AREA = W.block, DMAX = 8100;   // the longest link
+
+  return { hash, setRoot, sector, systemAt, STAR_NAMES: STARS.map(s => s[0]), regionKind, wormhole, partner, spot, AREA, DMAX, W, BANDS, LAYER, density, voidMask,
+           configure: o => { if (o.W) Object.assign(W, o.W); if (o.bands) for (const k in o.bands) Object.assign(BANDS[k], o.bands[k]); Object.assign(CFG, o); cache.clear(); whCache.clear(); }, CFG, clear: () => { cache.clear(); whCache.clear(); },
+           resetRoot: r => { setRoot(r); whCache.clear(); } };
+})();
+if (typeof module !== 'undefined') module.exports = Gen;
+
+Gen.configure({"sysBase": 0.015, "sysScale": 0.6, "sysPow": 1.4, "maxNeighbors": 8, "whT": 0.45});
+</script>
+<script>
+(() => {
+const G = Gen;
+const STAR_COLORS = { 'Red dwarf':'#ff7a59', 'Yellow dwarf':'#ffd166', 'White dwarf':'#eef4ff', 'Red giant':'#ff4f2e',
+  'Blue giant':'#7fb2ff', 'Neutron star':'#b9f3ff', 'Black hole':'#9d7bff', 'Rogue planet':'#8fa3b8' };
+const STAR_ORDER = ['Red dwarf','Yellow dwarf','White dwarf','Red giant','Blue giant','Neutron star','Black hole','Rogue planet'];
+const STAR_RGB = G.STAR_NAMES.map(n => { const h = STAR_COLORS[n]; return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); });
+const BIOME_COLORS = { Volcanic:'#ff6a3d', Scorched:'#d9a066', Toxic:'#b6d84a', Desert:'#e8c27a', Terra:'#5fd08a', Forest:'#2fa860',
+  Jungle:'#3fc46e', Swamp:'#7f9a5a', Grassland:'#a8d86a', Ocean:'#3f8fe0', Fungal:'#c78bd8', Tundra:'#b8cbd8', Glacial:'#d8f0ff',
+  'Gas Giant':'#e0b080', Barren:'#9a9a9a', Crystal:'#9ef0f0', Irradiated:'#d8f04a', Exotic:'#ff7ad8' };
+const css = getComputedStyle(document.documentElement);
+const C = n => css.getPropertyValue(n).trim();
+const COL = { bg:C('--bg'), ink:C('--ink'), dim:C('--dim'), accent:C('--accent'), worm:C('--worm'), warn:C('--warn'),
+  major:C('--grid-major'), minor:C('--grid-minor') };
+
+const box = document.getElementById('mapbox'), cv = document.getElementById('map'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+let root = 20261011;
+let view = { cx: 0, cy: 0, s: 1 };             // s = screen pixels per sector
+const MIN_S = 0.45, MAX_S = 2600;
+let showWorm = true, showAsteroid = true, home = null, hover = null, dirty = true;
+let links = [], hoverLink = null, pickedLink = null, wormShown = [0, 0];
+const WORM_MAX = 40;   // most wormholes drawn at once
+// wormhole color by length, one step per reach band
+const WORM_BANDS = [[500, '#ffb35c', 'up to 500 sectors'], [1000, '#9be564', '500 to 1,000 sectors'], [3000, '#d58cff', '1,000 to 3,000 sectors'], [Infinity, '#6fb8ff', 'over 3,000 sectors']];
+const wormColor = d => WORM_BANDS.find(b => d <= b[0])[1];   // wormholes drawn this frame; the one under the cursor; the one clicked
+
+function resize() {
+  const r = box.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = r.width; H = r.height; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); dirty = true;
+}
+new ResizeObserver(resize).observe(box);
+
+// ---- far view: one pixel per sector, drawn into cached tiles ----
+const TILE = 128, tiles = new Map();
+let tileCap = 400;                              // raised to fit the view; old tiles go first, visible ones never
+function tile(tx, ty) {
+  const k = tx + ',' + ty; let t = tiles.get(k);
+  if (t) { tiles.delete(k); tiles.set(k, t); return t; }   // mark as recently used
+  const c = document.createElement('canvas'); c.width = c.height = TILE;
+  const g = c.getContext('2d'), img = g.createImageData(TILE, TILE);
+  for (let j = 0; j < TILE; j++) for (let i = 0; i < TILE; i++) {
+    const star = G.systemAt(tx * TILE + i, ty * TILE + j);
+    if (star < 0) continue;
+    const rgb = STAR_RGB[star], o = (j * TILE + i) * 4;
+    img.data[o] = rgb[0]; img.data[o + 1] = rgb[1]; img.data[o + 2] = rgb[2]; img.data[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  tiles.set(k, c);
+  while (tiles.size > tileCap) tiles.delete(tiles.keys().next().value);
+  return c;
+}
+
+const sx = X => (X - view.cx) * view.s + W / 2, sy = Y => (Y - view.cy) * view.s + H / 2;
+const toWorld = (px, py) => [(px - W / 2) / view.s + view.cx, (py - H / 2) / view.s + view.cy];
+const regCenter = (X, x) => X + (x + 10.5) / 21;
+
+function niceStep(minPx) {
+  const steps = [1, 5, 25, 100, 500, 2500, 10000];
+  for (const st of steps) if (st * view.s >= minPx) return st;
+  return steps[steps.length - 1];
+}
+
+let pending = 0;
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = COL.bg; ctx.fillRect(0, 0, W, H);
+  const [x0, y0] = toWorld(0, 0), [x1, y1] = toWorld(W, H);
+  const X0 = Math.floor(x0), Y0 = Math.floor(y0), X1 = Math.floor(x1), Y1 = Math.floor(y1);
+  const rs = view.s / 21;                       // pixels per region
+  pending = 0;
+
+  // grid: regions inside sectors when close, then sectors or groups of sectors
+  if (rs >= 7) {
+    ctx.strokeStyle = COL.minor; ctx.lineWidth = 1; ctx.beginPath();
+    const r0 = Math.floor(x0 * 21), r1 = Math.ceil(x1 * 21), q0 = Math.floor(y0 * 21), q1 = Math.ceil(y1 * 21);
+    for (let r = r0; r <= r1; r++) { const x = Math.round(sx(r / 21)) + .5; ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let q = q0; q <= q1; q++) { const y = Math.round(sy(q / 21)) + .5; ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+  }
+  const step = niceStep(30);
+  ctx.strokeStyle = COL.major; ctx.lineWidth = rs >= 7 ? 2 : 1; ctx.beginPath();
+  for (let X = Math.floor(x0 / step) * step; X <= x1; X += step) { const x = Math.round(sx(X)) + .5; ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let Y = Math.floor(y0 / step) * step; Y <= y1; Y += step) { const y = Math.round(sy(Y)) + .5; ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
+
+  if (view.s < 3) {
+    // far: tiles, one pixel per sector
+    ctx.imageSmoothingEnabled = view.s < 1;
+    const t0x = Math.floor(x0 / TILE), t1x = Math.floor(x1 / TILE), t0y = Math.floor(y0 / TILE), t1y = Math.floor(y1 / TILE);
+    tileCap = Math.max(400, Math.ceil((t1x - t0x + 1) * (t1y - t0y + 1) * 1.5));
+    let built = 0; const start = performance.now();
+    for (let ty = t0y; ty <= t1y; ty++) for (let tx = t0x; tx <= t1x; tx++) {
+      const k = tx + ',' + ty;
+      if (!tiles.has(k) && performance.now() - start > 30) { pending++; continue; }
+      if (!tiles.has(k)) built++;
+      const t = tile(tx, ty);
+      const px = sx(tx * TILE), py = sy(ty * TILE), sz = TILE * view.s;
+      ctx.drawImage(t, px, py, sz, sz);
+    }
+  } else {
+    // near: each system drawn on its own
+    for (let Y = Y0; Y <= Y1; Y++) for (let X = X0; X <= X1; X++) {
+      const s = G.sector(X, Y);
+      if (!s.hasSystem) continue;
+      drawSystem(s, rs);
+    }
+  }
+
+  // regions: asteroid fields and pirate outposts, once regions are large enough
+  if (rs >= 11) {
+    for (let Y = Y0; Y <= Y1; Y++) for (let X = X0; X <= X1; X++) {
+      const s = G.sector(X, Y);
+      for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) {
+        const cxp = sx(regCenter(X, x)), cyp = sy(regCenter(Y, y));
+        if (cxp < -rs || cxp > W + rs || cyp < -rs || cyp > H + rs) continue;
+        if (s.hasSystem && x === 0 && y === 0) continue;
+        if (s.hasSystem && s.planets.some(p => p.x === x && p.y === y)) continue;
+        const k = G.regionKind(X, Y, x, y);
+        if (k !== 'empty') drawRegionThing(k, cxp, cyp, rs);
+      }
+    }
+  }
+
+  if (showWorm) drawWormholes(x0, y0, x1, y1, rs);
+  updateHud(step, rs);
+  if (pending) requestAnimationFrame(() => { dirty = true; });
+}
+
+function drawSystem(s, rs) {
+  const cx = sx(s.X + .5), cy = sy(s.Y + .5), col = STAR_COLORS[s.star.name];
+  // orbits and planets once a sector is big enough to tell them apart
+  if (view.s >= 60 && s.planets.length) {
+    ctx.strokeStyle = 'rgba(196,210,222,.45)'; ctx.lineWidth = 1;
+    for (const p of s.planets) { ctx.beginPath(); ctx.arc(cx, cy, p.r * rs, 0, Math.PI * 2); ctx.stroke(); }
+    for (const p of s.planets) {
+      const px = sx(regCenter(s.X, p.x)), py = sy(regCenter(s.Y, p.y)), r = Math.max(2.5, Math.min(rs * .28, 14));
+      ctx.fillStyle = BIOME_COLORS[p.biome]; ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+      if (p.ring) { ctx.strokeStyle = COL.ink; ctx.lineWidth = Math.max(1, r * .18); ctx.beginPath(); ctx.ellipse(px, py, r * 1.7, r * .55, -.4, 0, Math.PI * 2); ctx.stroke(); }
+      if (rs >= 26) label(p.biome, px, py + r + 13);
+    }
+  }
+  const r = view.s >= 60 ? Math.max(4, Math.min(rs * .42, 22)) : Math.max(1.6, Math.min(view.s * .22, 9));
+  if (s.star.kind === 'blackhole') {
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, r * .3); ctx.beginPath(); ctx.arc(cx, cy, r * 1.15, 0, Math.PI * 2); ctx.stroke();
+  } else {
+    if (view.s >= 8) { const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2.4); g.addColorStop(0, col); g.addColorStop(.4, col + '55'); g.addColorStop(1, col + '00'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  }
+  if (rs >= 26) label(s.star.name, cx, cy + r + 14);
+}
+
+function label(t, x, y) {
+  ctx.font = '500 11px ' + C('--display'); ctx.textAlign = 'center';
+  ctx.lineWidth = 3; ctx.strokeStyle = COL.bg; ctx.strokeText(t, x, y); ctx.fillStyle = COL.ink; ctx.fillText(t, x, y);
+}
+
+function drawRegionThing(k, x, y, rs) {
+  if ((k === 'rock' || k === 'ice') && !showAsteroid) return;
+  const u = Math.min(rs, 40);
+  if (k === 'rock' || k === 'ice') {
+    ctx.fillStyle = k === 'rock' ? '#b9a68f' : '#a9e4ff';
+    const pts = [[-.25,-.2],[.2,-.25],[.05,.05],[-.2,.22],[.25,.2],[-.02,-.32],[.32,-.02]];
+    for (const [a, b] of pts) { ctx.beginPath(); ctx.arc(x + a * u, y + b * u, Math.max(1.2, u * .07), 0, Math.PI * 2); ctx.fill(); }
+  } else if (k === 'pirate') {
+    ctx.fillStyle = COL.warn; ctx.beginPath(); ctx.moveTo(x, y - u * .3); ctx.lineTo(x + u * .28, y + u * .22); ctx.lineTo(x - u * .28, y + u * .22); ctx.closePath(); ctx.fill();
+  }
+}
+
+function drawWormholes(x0, y0, x1, y1, rs) {
+  const A = G.AREA, M = Math.ceil(G.DMAX / A) + 1; // margin in areas: the longest wormhole
+  const a0 = Math.floor(x0 / A) - M, a1 = Math.floor(x1 / A) + M, b0 = Math.floor(y0 / A) - M, b1 = Math.floor(y1 / A) + M;
+  if ((a1 - a0) * (b1 - b0) > 160000) return;
+  const vis = (X, Y) => X >= x0 - 1 && X <= x1 + 1 && Y >= y0 - 1 && Y <= y1 + 1;
+  // at most WORM_MAX wormholes are drawn, at full strength: the ones with the lowest rolls among those in view,
+  // so the same ones stay while panning and zooming out never turns the map into a tangle
+  ctx.lineWidth = 2;
+  const ends = [], cands = [];
+  links = [];
+  for (let ay = b0; ay <= b1; ay++) for (let ax = a0; ax <= a1; ax++) {
+    const w = G.wormhole(ax, ay);
+    if (!w) continue;
+    const pa = [regCenter(w.a.X, w.a.x), regCenter(w.a.Y, w.a.y)], pb = [regCenter(w.b.X, w.b.x), regCenter(w.b.Y, w.b.y)];
+    const inA = vis(pa[0], pa[1]), inB = vis(pb[0], pb[1]);
+    if (!inA && !inB) continue;
+    const pIn = w.px >= a0 && w.px <= a1 && w.py >= b0 && w.py <= b1;
+    if (pIn && (ay * 1e6 + ax) > (w.py * 1e6 + w.px)) continue;   // draw each pair once
+    cands.push({ w, pa, pb });
+  }
+  cands.sort((p, q) => p.w.u - q.w.u);
+  wormShown = [Math.min(WORM_MAX, cands.length), cands.length];
+  for (const { w, pa, pb } of cands.slice(0, WORM_MAX)) {
+    const col = wormColor(w.d);
+    ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(sx(pa[0]), sy(pa[1])); ctx.lineTo(sx(pb[0]), sy(pb[1])); ctx.stroke();
+    ends.push([pa, col], [pb, col]);
+    links.push({ w, pa, pb, key: linkKey(w) });
+  }
+  const r = Math.max(3, Math.min(rs * .35, 18));
+  for (const [[X, Y], col] of ends) {
+    const x = sx(X), y = sy(Y);
+    ctx.fillStyle = COL.bg; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, r * .3); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r * .35, 0, Math.PI * 2); ctx.fill();
+  }
+  // the hovered and the clicked wormhole drawn on top, brighter and thicker, at full strength at any zoom
+  for (const l of [pickedLink, hoverLink]) {
+    if (!l) continue;
+    const ax = sx(l.pa[0]), ay = sy(l.pa[1]), bx = sx(l.pb[0]), by = sy(l.pb[1]);
+    ctx.save(); ctx.shadowColor = wormColor(l.w.d); ctx.shadowBlur = 12;
+    ctx.strokeStyle = COL.ink; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.restore();
+    for (const [x, y] of [[ax, ay], [bx, by]]) {
+      ctx.fillStyle = COL.bg; ctx.beginPath(); ctx.arc(x, y, r + 2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = COL.ink; ctx.lineWidth = Math.max(2.5, r * .35); ctx.beginPath(); ctx.arc(x, y, r + 2, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+}
+const linkKey = w => [w.a.X, w.a.Y, w.a.x, w.a.y, w.b.X, w.b.Y, w.b.x, w.b.y].join(',');
+// the drawn wormhole nearest to a screen point, within a few pixels of its line
+function linkAt(px, py) {
+  let best = null, bd = 7;
+  for (const l of links) {
+    const ax = sx(l.pa[0]), ay = sy(l.pa[1]), bx = sx(l.pb[0]), by = sy(l.pb[1]);
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+    const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    if (d < bd) { bd = d; best = l; }
+  }
+  return best;
+}
+const where = s => `sector (${fmt(s.X)}, ${fmt(s.Y)})  region (${s.x}, ${s.y})`;
+function showLinkInfo(px, py) {
+  const box = document.getElementById('wormInfo'), l = pickedLink || hoverLink;
+  if (!l || !showWorm) { box.style.display = 'none'; cv.style.cursor = ''; return; }
+  cv.style.cursor = hoverLink ? 'pointer' : '';
+  const w = l.w;
+  box.innerHTML = `<b>Wormhole${pickedLink ? ' (selected)' : ''}</b>
+Length  ${fmt(w.d)} sectors
+End 1   ${where(w.a)}
+End 2   ${where(w.b)}` +
+    (pickedLink ? '<div class="row"><button data-go="a">Go to end 1</button><button data-go="b">Go to end 2</button><button data-go="x">Clear</button></div>' : '');
+  box.style.display = 'block';
+  if (pickedLink) { box.classList.add('pinned'); box.style.left = box.style.top = ''; return; }
+  box.classList.remove('pinned');
+  const bw = box.offsetWidth, bh = box.offsetHeight;
+  box.style.left = Math.min(W - bw - 10, px + 16) + 'px';
+  box.style.top = Math.max(10, Math.min(H - bh - 10, py + 16)) + 'px';
+}
+document.getElementById('wormInfo').addEventListener('click', e => {
+  const go = e.target.dataset && e.target.dataset.go;
+  if (!go || !pickedLink) return;
+  if (go === 'x') pickedLink = null;
+  else { const s = go === 'a' ? pickedLink.w.a : pickedLink.w.b; view.cx = regCenter(s.X, s.x); view.cy = regCenter(s.Y, s.y); }
+  dirty = true; showLinkInfo();
+});
+
+const fmt = n => Math.round(n).toLocaleString('en-US');
+function updateHud(step, rs) {
+  const wS = W / view.s, hS = H / view.s;
+  const size = rs >= 1 && wS < 6 ? `${fmt(W / rs)} × ${fmt(H / rs)} regions` : `${fmt(wS)} × ${fmt(hS)} sectors`;
+  const grid = rs >= 7 ? `thin lines: 1 region\nthick lines: ${step === 1 ? '1 sector (21 × 21 regions)' : step + ' sectors'}`
+    : `grid square: ${step === 1 ? '1 sector (21 × 21 regions)' : step + ' × ' + step + ' sectors'}`;
+  const worms = showWorm && wormShown[1] > wormShown[0] ? `\nwormholes: showing ${wormShown[0]} of ${fmt(wormShown[1])}` : '';
+  document.getElementById('hudTop').textContent = `Showing about ${size}\n${grid}${worms}`;
+  document.getElementById('hudTop').style.whiteSpace = 'pre';
+  // scale bar
+  let px = 0, txt = '';
+  const opts = [];
+  if (rs >= 2) opts.push([1 / 21, '1 region'], [5 / 21, '5 regions'], [1, '1 sector']);
+  [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500].forEach(n => opts.push([n, n === 1 ? '1 sector' : n + ' sectors']));
+  for (const [len, t] of opts) { const p = len * view.s; if (p >= 60 && p <= 220) { px = p; txt = t; break; } }
+  if (!px) { const [len, t] = opts.find(o => o[0] * view.s >= 60) || opts[opts.length - 1]; px = len * view.s; txt = t; }
+  document.getElementById('scaleBar').style.width = px + 'px';
+  document.getElementById('scaleLabel').textContent = txt;
+}
+
+// ---- readout under the cursor ----
+function describe(px, py) {
+  const [wx, wy] = toWorld(px, py), X = Math.floor(wx), Y = Math.floor(wy);
+  const x = Math.min(10, Math.floor((wx - X) * 21) - 10), y = Math.min(10, Math.floor((wy - Y) * 21) - 10);
+  const s = G.sector(X, Y);
+  const lines = [`Sector  ${X}, ${Y}`];
+  if (s.hasSystem) {
+    lines.push(`System  ${s.star.name}`);
+    if (s.star.kind === 'star') lines.push(`Planets ${s.planets.length}`);
+  } else lines.push('Deep Space sector');
+  if (view.s / 21 >= 4) {
+    lines.push('', `Region  ${x}, ${y}`);
+    let what;
+    const p = s.hasSystem && s.planets.find(q => q.x === x && q.y === y);
+    if (s.hasSystem && !x && !y) what = 'System center: ' + s.star.name;
+    else if (p) what = 'Planet orbit: ' + p.biome + (p.ring ? ', with a ring' : '');
+    else {
+      const k = G.regionKind(X, Y, x, y);
+      const kind = { rock: 'rock asteroid field', ice: 'ice asteroid field', pirate: 'pirate outpost', empty: 'empty' }[k];
+      if ((k === 'rock' || k === 'ice') && !showAsteroid) {
+        what = (s.hasSystem ? 'Open Space' : 'Deep Space') + ', ' + kind + ' (hidden)';
+      } else {
+        what = (s.hasSystem ? 'Open Space' : 'Deep Space') + ': ' + kind;
+      }
+    }
+    const w = G.wormhole(Math.floor(X / G.AREA), Math.floor(Y / G.AREA));
+    if (w && w.a.X === X && w.a.Y === Y && w.a.x === x && w.a.y === y)
+      what = `Wormhole to sector ${w.b.X}, ${w.b.Y}\nregion ${w.b.x}, ${w.b.y} (${fmt(w.d)} sectors away)`;
+    lines.push(what);
+  }
+  return lines.join('\n');
+}
+
+// ---- key ----
+function keyRow(drawFn, text) {
+  const c = document.createElement('canvas'); c.width = 44; c.height = 32;
+  const g = c.getContext('2d'); g.scale(2, 2); drawFn(g);
+  const t = document.createElement('span'); t.textContent = text;
+  document.getElementById('key').append(c, t);
+}
+const dot = col => g => { g.fillStyle = col; g.beginPath(); g.arc(11, 8, 4.5, 0, Math.PI * 2); g.fill(); };
+STAR_ORDER.forEach(n => keyRow(n === 'Black hole' ? g => { g.fillStyle = '#000'; g.beginPath(); g.arc(11, 8, 4, 0, 7); g.fill(); g.strokeStyle = STAR_COLORS[n]; g.lineWidth = 1.6; g.beginPath(); g.arc(11, 8, 6.4, 0, 7); g.stroke(); } : g => { g.fillStyle = STAR_COLORS[n]; g.beginPath(); g.arc(11, 8, 4.5, 0, Math.PI * 2); g.fill(); }, n));
+WORM_BANDS.forEach(([, col, label]) => keyRow(g => { g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(1, 8); g.lineTo(21, 8); g.stroke(); g.fillStyle = COL.bg; g.beginPath(); g.arc(17, 8, 4, 0, 7); g.fill(); g.strokeStyle = col; g.lineWidth = 1.2; g.beginPath(); g.arc(17, 8, 4, 0, 7); g.stroke(); g.fillStyle = col; g.beginPath(); g.arc(17, 8, 1.4, 0, 7); g.fill(); }, 'Wormhole, ' + label));
+keyRow(g => { g.fillStyle = '#5fd08a'; g.beginPath(); g.arc(11, 8, 4, 0, 7); g.fill(); g.strokeStyle = 'rgba(196,210,222,.6)'; g.beginPath(); g.arc(1, 8, 10, -.6, .6); g.stroke(); }, 'Planet on its orbit');
+keyRow(g => drawThing(g, 'rock'), 'Rock asteroid field');
+keyRow(g => drawThing(g, 'ice'), 'Ice asteroid field');
+keyRow(g => drawThing(g, 'pirate'), 'Pirate outpost');
+function drawThing(g, k) { const save = ctx; const tmp = { x: 11, y: 8 };
+  if (k === 'pirate') { g.fillStyle = COL.warn; g.beginPath(); g.moveTo(11, 2); g.lineTo(17, 13); g.lineTo(5, 13); g.closePath(); g.fill(); return; }
+  g.fillStyle = k === 'rock' ? '#b9a68f' : '#a9e4ff'; [[-5,-3],[4,-4],[1,1],[-4,4],[5,4],[0,-6],[6,0]].forEach(([a, b]) => { g.beginPath(); g.arc(11 + a, 8 + b, 1.6, 0, 7); g.fill(); }); }
+
+// ---- interaction ----
+const pointers = new Map(); let pinch = null;
+function zoomAt(px, py, f) {
+  const [wx, wy] = toWorld(px, py);
+  view.s = Math.min(MAX_S, Math.max(MIN_S, view.s * f));
+  view.cx = wx - (px - W / 2) / view.s; view.cy = wy - (py - H / 2) / view.s; dirty = true;
+}
+const local = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+let downAt = null;
+cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, local(e)); downAt = local(e); });
+cv.addEventListener('pointermove', e => {
+  const p = local(e);
+  if (pointers.has(e.pointerId)) {
+    const prev = pointers.get(e.pointerId); pointers.set(e.pointerId, p);
+    if (pointers.size === 1) { view.cx -= (p[0] - prev[0]) / view.s; view.cy -= (p[1] - prev[1]) / view.s; dirty = true; }
+    else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch) zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, d / pinch);
+      pinch = d;
+    }
+  }
+  hover = p; document.getElementById('readout').textContent = describe(p[0], p[1]);
+  const l = pointers.size ? null : (showWorm ? linkAt(p[0], p[1]) : null);
+  if ((l && l.key) !== (hoverLink && hoverLink.key)) { hoverLink = l; dirty = true; }
+  showLinkInfo(p[0], p[1]);
+});
+cv.addEventListener('pointerleave', () => { if (hoverLink) { hoverLink = null; dirty = true; } showLinkInfo(); });
+const up = e => {
+  const p = local(e);
+  // a click (not a drag) selects the wormhole under the cursor, or clears the selection
+  if (downAt && pointers.size === 1 && Math.hypot(p[0] - downAt[0], p[1] - downAt[1]) < 4 && e.type === 'pointerup') {
+    const l = showWorm ? linkAt(p[0], p[1]) : null;
+    pickedLink = l && !(pickedLink && pickedLink.key === l.key) ? l : null;
+    dirty = true; showLinkInfo(p[0], p[1]);
+  }
+  downAt = null; pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null;
+};
+cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+cv.addEventListener('wheel', e => { e.preventDefault(); const [px, py] = local(e); zoomAt(px, py, Math.exp(-e.deltaY * 0.0016)); }, { passive: false });
+cv.addEventListener('dblclick', e => { const [px, py] = local(e); zoomAt(px, py, 3); });
+cv.addEventListener('keydown', e => {
+  const d = 80 / view.s;
+  if (e.key === 'ArrowLeft') view.cx -= d; else if (e.key === 'ArrowRight') view.cx += d;
+  else if (e.key === 'ArrowUp') view.cy -= d; else if (e.key === 'ArrowDown') view.cy += d;
+  else if (e.key === '+' || e.key === '=') zoomAt(W / 2, H / 2, 1.6); else if (e.key === '-') zoomAt(W / 2, H / 2, 1 / 1.6);
+  else return;
+  e.preventDefault(); dirty = true;
+});
+document.getElementById('zin').onclick = () => zoomAt(W / 2, H / 2, 2);
+document.getElementById('zout').onclick = () => zoomAt(W / 2, H / 2, .5);
+document.getElementById('home').onclick = () => { Object.assign(view, home); dirty = true; };
+document.getElementById('showWorm').onchange = e => { showWorm = e.target.checked; if (!showWorm) hoverLink = pickedLink = null; dirty = true; showLinkInfo(); };
+document.getElementById('showAsteroid').onchange = e => { showAsteroid = e.target.checked; dirty = true; };
+document.getElementById('newSeed').onclick = () => { hoverLink = pickedLink = null; showLinkInfo(); setRoot((Math.random() * 4294967296) >>> 0); };
+
+function setRoot(r) {
+  root = r; G.resetRoot(r); tiles.clear();
+  document.getElementById('seedLabel').textContent = 'seed ' + r;
+  // start on a wormhole near the middle so the first view shows one end to end
+  let best = null;
+  for (let d = 0; d < 30 && !best; d++) for (let ax = -d; ax <= d && !best; ax++) for (let ay = -d; ay <= d && !best; ay++) {
+    if (Math.max(Math.abs(ax), Math.abs(ay)) !== d) continue;
+    const w = G.wormhole(ax, ay); if (w) best = w;
+  }
+  if (best) {
+    home = { cx: best.a.X + .5, cy: best.a.Y + .5, s: Math.min(W, H) / 12 };   // about 12 x 12 sectors, as in game
+  } else home = { cx: 0, cy: 0, s: 1 };
+  Object.assign(view, home); dirty = true;
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (!dirty || !W || !H) return;
+  dirty = false;
+  try { draw(); } catch (e) { console.error(e); document.getElementById('hudTop').textContent = 'Map error: ' + e.message; }
+}
+resize(); setRoot(root);
+try { const q = new URLSearchParams(location.search); if (q.get('z')) { view.s = +q.get('z'); if (q.get('x')) { view.cx = +q.get('x'); view.cy = +q.get('y'); } } } catch (e) {}
+loop();
+})();
+</script>
